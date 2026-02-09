@@ -1,0 +1,5 @@
+{
+  "name": "StoryFlow Pro",
+  "description": "A professional storyboard generator that transforms scripts into cinematic visual sequences using Gemini 3 Pro and high-resolution image generation.",
+  "requestFramePermissions": []
+}
