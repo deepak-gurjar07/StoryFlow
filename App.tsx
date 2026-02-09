@@ -1,14 +1,14 @@
 
-import React, { useState, useEffect, useRef } from 'react';
-import { Scene, ImageSize, StoryboardState } from './types';
+import React, { useState, useRef, useEffect } from 'react';
+import { Scene, StoryboardState, ImageSize } from './types';
 import { parseScriptToScenes, generateStoryboardImage } from './services/geminiService';
-import ApiKeyWall from './components/ApiKeyWall';
 import ChatBot from './components/ChatBot';
 import SceneCard from './components/SceneCard';
+import ApiKeyWall from './components/ApiKeyWall';
 
 const App: React.FC = () => {
-  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [script, setScript] = useState('');
+  const [showApiKeyWall, setShowApiKeyWall] = useState(false);
   const [state, setState] = useState<StoryboardState>({
     title: 'Untitled Project',
     scenes: [],
@@ -18,17 +18,17 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Check for selected API key on mount as required for Pro models
   useEffect(() => {
-    const checkKey = async () => {
+    const checkApiKey = async () => {
       if (window.aistudio) {
-        const has = await window.aistudio.hasSelectedApiKey();
-        setHasApiKey(has);
-      } else {
-        // Fallback for environments where window.aistudio doesn't exist
-        setHasApiKey(true);
+        const hasKey = await window.aistudio.hasSelectedApiKey();
+        if (!hasKey) {
+          setShowApiKeyWall(true);
+        }
       }
     };
-    checkKey();
+    checkApiKey();
   }, []);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -52,10 +52,6 @@ const App: React.FC = () => {
       const parsedScenes = await parseScriptToScenes(script);
       setState(prev => ({ ...prev, scenes: parsedScenes, isParsing: false }));
     } catch (err) {
-      // Reset key selection if entity not found error occurs
-      if (err instanceof Error && err.message.includes("Requested entity was not found")) {
-        setHasApiKey(false);
-      }
       setError(err instanceof Error ? err.message : 'Failed to parse script.');
       setState(prev => ({ ...prev, isParsing: false }));
     }
@@ -76,11 +72,12 @@ const App: React.FC = () => {
         ...prev,
         scenes: prev.scenes.map(s => s.id === id ? { ...s, imageUrl: url, status: 'completed' } : s)
       }));
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      // Reset key selection if entity not found error occurs
-      if (err instanceof Error && err.message.includes("Requested entity was not found")) {
-        setHasApiKey(false);
+      // Handle "Requested entity was not found" error by prompting for key re-selection
+      if (err?.message?.includes("Requested entity was not found.")) {
+        setError("A paid API Key is required for Pro features. Please re-select your key.");
+        if (window.aistudio) await window.aistudio.openSelectKey();
       }
       setState(prev => ({
         ...prev,
@@ -96,8 +93,9 @@ const App: React.FC = () => {
     }
   };
 
-  if (hasApiKey === false) {
-    return <ApiKeyWall onContinue={() => setHasApiKey(true)} />;
+  // Render the API Key Wall if no key is selected
+  if (showApiKeyWall) {
+    return <ApiKeyWall onContinue={() => setShowApiKeyWall(false)} />;
   }
 
   return (
@@ -108,34 +106,23 @@ const App: React.FC = () => {
           <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-600/20">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
           </div>
-          <h1 className="font-serif text-xl font-bold text-white tracking-tight">StoryFlow Pro</h1>
+          <h1 className="font-serif text-xl font-bold text-white tracking-tight">StoryFlow</h1>
         </div>
         
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1">
-            <span className="text-[10px] font-bold text-zinc-500 uppercase px-1">Quality</span>
-            {(['1K', '2K', '4K'] as ImageSize[]).map((size) => (
-              <button
-                key={size}
-                onClick={() => setState(prev => ({ ...prev, imageSize: size }))}
-                className={`px-2 py-1 text-xs rounded transition-colors ${
-                  state.imageSize === size 
-                    ? 'bg-indigo-600 text-white' 
-                    : 'text-zinc-500 hover:text-zinc-300'
-                }`}
-              >
-                {size}
-              </button>
-            ))}
+          <div className="hidden md:flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1">
+            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+              {state.imageSize === '1K' ? 'Engine: Gemini Flash' : `Engine: Gemini Pro (${state.imageSize})`}
+            </span>
           </div>
           
           <button 
-            className="text-xs text-zinc-400 hover:text-white transition-colors underline underline-offset-4"
+            className="text-xs text-zinc-400 hover:text-white transition-colors"
             onClick={async () => {
-              await window.aistudio.openSelectKey();
+              if (window.aistudio) await window.aistudio.openSelectKey();
             }}
           >
-            Change Key
+            Manage Key
           </button>
         </div>
       </header>
@@ -166,8 +153,27 @@ const App: React.FC = () => {
               value={script}
               onChange={(e) => setScript(e.target.value)}
               placeholder="Paste your script here... (e.g. INT. COFFEE SHOP - DAY...)"
-              className="w-full h-80 md:h-[calc(100vh-400px)] bg-zinc-900/30 border border-zinc-800 rounded-xl p-4 text-sm font-mono leading-relaxed text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors resize-none"
+              className="w-full h-80 md:h-[calc(100vh-500px)] bg-zinc-900/30 border border-zinc-800 rounded-xl p-4 text-sm font-mono leading-relaxed text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors resize-none"
             />
+
+            <div className="flex flex-col gap-2">
+              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Image Quality</label>
+              <div className="flex gap-2">
+                {(['1K', '2K', '4K'] as ImageSize[]).map((size) => (
+                  <button
+                    key={size}
+                    onClick={() => setState(prev => ({ ...prev, imageSize: size }))}
+                    className={`flex-1 py-2 text-[10px] font-bold rounded-lg border transition-all ${
+                      state.imageSize === size 
+                        ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/20' 
+                        : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                    }`}
+                  >
+                    {size} {size !== '1K' ? '(Pro)' : ''}
+                  </button>
+                ))}
+              </div>
+            </div>
             
             <button
               onClick={processScript}
@@ -175,13 +181,13 @@ const App: React.FC = () => {
               className={`w-full py-4 rounded-xl font-bold transition-all flex items-center justify-center gap-2 ${
                 state.isParsing 
                   ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' 
-                  : 'bg-white text-black hover:bg-zinc-200'
+                  : 'bg-white text-black hover:bg-zinc-200 shadow-xl shadow-white/5'
               }`}
             >
               {state.isParsing ? (
                 <>
                   <div className="w-4 h-4 border-2 border-zinc-600 border-t-zinc-400 rounded-full animate-spin"></div>
-                  Analyzing Script...
+                  Parsing...
                 </>
               ) : (
                 <>
@@ -194,19 +200,23 @@ const App: React.FC = () => {
           </div>
           
           <div className="p-6 flex-1 overflow-y-auto">
-            <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-4">Tips</h3>
+            <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-4">Workflow</h3>
             <ul className="text-xs text-zinc-400 space-y-3">
               <li className="flex gap-2">
-                <span className="text-indigo-500">•</span>
-                Use standard screenplay format for best results.
+                <span className="text-indigo-500 font-bold">1</span>
+                Paste or upload your script.
               </li>
               <li className="flex gap-2">
-                <span className="text-indigo-500">•</span>
-                Gemini Pro Image creates cinematic, high-fidelity storyboard panels.
+                <span className="text-indigo-500 font-bold">2</span>
+                Hit 'Analyze' to break it into shots.
               </li>
               <li className="flex gap-2">
-                <span className="text-indigo-500">•</span>
-                Ask the Director's Assistant for framing or lighting ideas.
+                <span className="text-indigo-500 font-bold">3</span>
+                Choose quality (2K/4K requires Pro Engine).
+              </li>
+              <li className="flex gap-2">
+                <span className="text-indigo-500 font-bold">4</span>
+                Generate frames one-by-one or all at once.
               </li>
             </ul>
           </div>
@@ -220,7 +230,7 @@ const App: React.FC = () => {
                 <h2 className="text-lg font-semibold text-white">Visual Sequence</h2>
                 <button
                   onClick={generateAllPending}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 shadow-lg shadow-indigo-600/20"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
                   Generate All Frames
@@ -240,13 +250,13 @@ const App: React.FC = () => {
               </div>
             </>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center p-12 text-center opacity-60">
-              <div className="w-24 h-24 bg-zinc-900 rounded-3xl flex items-center justify-center mb-6 border border-zinc-800">
-                <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-500"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+            <div className="flex-1 flex flex-col items-center justify-center p-12 text-center">
+              <div className="w-20 h-20 bg-zinc-900 rounded-3xl flex items-center justify-center mb-6 border border-zinc-800">
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-500"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
               </div>
-              <h3 className="text-xl font-serif text-white mb-2">No script analyzed yet</h3>
+              <h3 className="text-xl font-serif text-white mb-2">Ready to Visualize?</h3>
               <p className="text-sm text-zinc-500 max-w-sm">
-                Paste a scene description or upload a script in the editor to start generating your cinematic storyboard.
+                Paste your script and StoryFlow will handle the cinematography.
               </p>
             </div>
           )}

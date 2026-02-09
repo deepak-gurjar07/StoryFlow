@@ -8,7 +8,7 @@ const getAIClient = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
 export const parseScriptToScenes = async (scriptText: string): Promise<Scene[]> => {
   const ai = getAIClient();
   const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
+    model: 'gemini-3-flash-preview',
     contents: `Analyze the following screenplay/script and break it down into a series of visual storyboard scenes. For each scene, provide a scene number, a visual description (what happens in the frame), a visual prompt (optimized for high-quality image generation), and the setting. Return the data as a clean JSON array.
     
     Script:
@@ -33,7 +33,6 @@ export const parseScriptToScenes = async (scriptText: string): Promise<Scene[]> 
   });
 
   try {
-    // Access response.text property directly
     const rawData = JSON.parse(response.text || "[]");
     return rawData.map((s: any, index: number) => ({
       ...s,
@@ -52,8 +51,21 @@ export const generateStoryboardImage = async (
 ): Promise<string> => {
   const ai = getAIClient();
   
-  // Use gemini-2.5-flash-image by default, upgrade to gemini-3-pro-image-preview for high quality (2K/4K)
-  const model = (size === '2K' || size === '4K') ? 'gemini-3-pro-image-preview' : 'gemini-2.5-flash-image';
+  // Upgrade to gemini-3-pro-image-preview for high-quality (2K/4K) requests as per guidelines
+  const model = (size === '2K' || size === '4K') 
+    ? 'gemini-3-pro-image-preview' 
+    : 'gemini-2.5-flash-image';
+  
+  const config: any = {
+    imageConfig: {
+      aspectRatio: "16:9"
+    }
+  };
+
+  // Set imageSize config specifically for gemini-3-pro-image-preview
+  if (model === 'gemini-3-pro-image-preview') {
+    config.imageConfig.imageSize = size;
+  }
   
   const response = await ai.models.generateContent({
     model: model,
@@ -62,19 +74,16 @@ export const generateStoryboardImage = async (
         { text: `A cinematic storyboard panel, professional film aesthetic, hand-drawn digital art style. Scene description: ${prompt}` }
       ]
     },
-    config: {
-      imageConfig: {
-        aspectRatio: "16:9",
-        // imageSize is only supported for gemini-3-pro-image-preview
-        ...(model === 'gemini-3-pro-image-preview' ? { imageSize: size } : {})
-      }
-    }
+    config: config
   });
 
-  // Find the image part in the response candidates
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
-    if (part.inlineData) {
-      return `data:image/png;base64,${part.inlineData.data}`;
+  // Iterate through parts to find the image part (base64 encoded)
+  const candidate = response.candidates?.[0];
+  if (candidate) {
+    for (const part of candidate.content.parts) {
+      if (part.inlineData) {
+        return `data:image/png;base64,${part.inlineData.data}`;
+      }
     }
   }
 
@@ -84,18 +93,16 @@ export const generateStoryboardImage = async (
 export const getChatResponse = async (history: ChatMessage[], message: string) => {
   const ai = getAIClient();
   const chat = ai.chats.create({
-    model: 'gemini-3-pro-preview',
+    model: 'gemini-3-flash-preview',
     config: {
       systemInstruction: 'You are an expert film director and storyboard consultant. Help the user refine their script, visualize their scenes, and give advice on cinematography, lighting, and pacing.'
     },
-    // Pass chat history to maintain conversation context
     history: history.map(m => ({
       role: m.role,
       parts: [{ text: m.text }]
     }))
   });
 
-  // sendMessage accepts a message parameter
   const response = await chat.sendMessage({ message });
   return response.text;
 };
